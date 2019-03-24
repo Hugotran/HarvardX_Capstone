@@ -1,0 +1,99 @@
+---
+title: "Step2_MovieLens_ML"
+author: "Trần Phú Hòa"
+date: "March 3, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Content
+Clear workspace and free up memory
+Load useful packages
+Load useful dataset
+Disriptive statistic
+
+# Clear workspace and free up memory
+```{r Clear workspace and free up memory, echo = FALSE}
+rm(list = ls(all.names =  TRUE))
+gc()
+```
+
+# Load useful packages
+```{r Load Useful packages, echo = FALSE}
+library(tidyverse)
+
+```
+
+# Load useful dataset and remove unused datasets
+```{r Load useful dataset, echo = FALSE}
+load("tidy_edx.RData")
+```
+
+```{r}
+load("edx1.RData")
+```
+
+# Glimpse at the dataset
+How many row and column are there in the dataset?
+What is the type of this dataset?
+What is the type of variables in this dataset?
+
+```{r Glimpse at the dataset}
+glimpse(tidy_edx)
+
+```
+
+
+# Discriptive statistic
+```{r}
+tidy_edx %>% summarise(n_distinct_genres = n_distinct(genres), 
+                       n_distinct_movie_year = n_distinct(movie_year),
+                       n_distinct_title = n_distinct(title))
+```
+
+```{r}
+tidy_edx %>% select(movie_year) %>% summarise(max_movie_year = max(movie_year),
+                                              min_movie_year = min(movie_year)
+                                              )
+```
+```{r}
+edx1 %>% filter(movie_year %in% c(1915, 2008)) %>% 
+  group_by(movie_year) %>%
+  summarise(count = n(), mean_rating = mean(rating))
+```
+
+```{r}
+edx1 %>% group_by(movie_year) %>%
+  summarise(mean_rating = mean(rating)) %>% 
+  mutate %>%
+  ggplot(aes(x = movie_year, y = mean_rating)) +
+  geom_point() +
+  coord_flip()
+```
+
+```{r}
+edx1 %>% group_by(movie_year) %>%
+  summarise(mean_rating = mean(rating), n_rating = n()) %>% 
+  
+  ggplot(aes(x = movie_year, y = n_rating)) +
+  geom_point() +
+  coord_flip()
+```
+
+```{r}
+edx1 %>% group_by(movie_year) %>%
+  summarise(mean_rating = mean(rating), n_rating = n()) %>% 
+  
+  ggplot(aes(x = mean_rating, y = n_rating)) +
+  geom_point() +
+  coord_flip()
+```
+
+
+```{r}
+tidy_edx %>% group_by(userId) %>% arrange(movie_year)
+```
+
