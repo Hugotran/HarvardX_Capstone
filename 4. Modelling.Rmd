@@ -1,0 +1,561 @@
+---
+title: "4. Modelling"
+author: "Trần Phú Hòa"
+date: "March 14, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Content
+Remove and free up space 
+Load useful packages
+Load useful data set (Note that I always want to remove those datasets that I will not use to save the memory.)
+Remove unnecessary data
+Create a random subset of my data (p = 0.2)
+
+Create training set
+Create cross validation data set
+Create linear regression model
+Create Random forest model
+
+# Remove and free up working space
+
+```{r Remove and free up working space, echo = FALSE}
+rm(list = ls(all.names = TRUE))
+gc()
+memory.limit()
+memory.size()
+```
+
+# Load useful packages
+```{r Load useful packages, echo = FALSE}
+
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+
+#to create training, testing and validation splits
+if(!require(rsample)) install.packages("rsample", repos = "http://cran.us.r-project.org") 
+
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+#
+#if(!require(broom)) install.packages("broom", repos = "http://cran.us.r-project.org")
+
+# To find RMSE
+if(!require(Metrics)) install.packages("Metrics", repos = "http://cran.us.r-project.org")
+
+#Random forest model
+if(!require(ranger)) install.packages("ranger", repos = "http://cran.us.r-project.org")
+```
+
+```{r}
+memory.size()
+```
+
+# Load exd1 data
+```{r}
+load("tidy_data.RData")
+memory.size()
+```
+
+# Remove data
+```{r}
+rm("tidy_edx", "validate_tidy_edx")
+
+gc()
+memory.size()
+
+```
+# Create sample of edx1 (p = 0.1)
+```{r}
+set.seed(1)
+
+sample_p02_edx1 <- sample_n(edx1, size = 0.001*nrow(edx1))
+subset_edx1_n_rating_higherequal1000 <- edx1 %>% group_by(userId) %>% mutate(count = n()) %>% filter(count >= 1000) %>% ungroup(userId) 
+sample2_edx <- sample_n(subset_edx1_n_rating_higherequal1000, size = 0.1*nrow(subset_edx1_n_rating_higherequal1000))
+```
+
+# Create training and cross validation data sets
+```{r}
+#Create validation set
+cv_split <- vfold_cv(sample2_edx, v = 5) #v: how many times the data should split
+memory.size()
+```
+
+```{r Mapping train & validate}
+#Mapping train & validate
+cv_data <- cv_split %>%
+  mutate(train = map(splits, ~training(.x)),
+         validate = map(splits, ~testing(.x)))
+memory.size()
+```
+
+```{r}
+cv_data <- cv_data %>% mutate(validate_actual = map(validate, ~.x$rating))
+```
+
+## Check memory usage
+```{r}
+rm("edx1", "cv_split", "sample_p02_edx1")
+memory.size()
+gc()
+```
+
+## Use linear regresion
+## Build models using the train data for each fold of the cross validation
+### Linear regression model
+
+```{r Linear Regression}
+# Apply linear regression model to "cv_data"
+cv_models_lm <- cv_data %>% 
+  mutate(model = map(train, ~lm(formula = rating ~ movieId + date_of_rating + userId, data = .x)))
+```
+
+```{r}
+
+#Extract the actual rating from the validate dataframes and store these in the column validate_actual
+cv_prep_lm <- cv_models_lm %>%
+  mutate(validate_predicted = map2(.x = model, .y = validate, ~predict(.x,.y)))
+#Use RMSE as the evaluation 
+cv_eval_m <- cv_prep_lm %>%
+  mutate(validate_rmse = map2_dbl(validate_actual, validate_predicted,
+                                 ~rmse(actual = .x, predicted = .y)))
+mean(cv_eval_m$validate_rmse)
+```
+
+### Random forest model
+
+```{r TUne the Hyper-Parameters}
+#Tune the Hyper-Parameters
+cv_tune <- cv_data %>% crossing(mtry = 1:6)
+```
+
+```{r Random forest model}
+cv_models_tunerf <- cv_tune %>%
+  mutate(model = map2(.x = train, .y = mtry, ~ranger(formula = rating ~.,
+                                    data = .x, mtry = .y,
+                                    num.trees = 100, seed = 42)))
+# Generate validate predictions for each model
+cv_prep_tunerf <- cv_models_tunerf %>% 
+  mutate(validate_predicted = map2(.x = model, .y = validate, ~predict(.x, .y)$predictions))
+```
+
+```{r}
+         
+# Calculate validate RMSE for each fold and mtry combination
+cv_eval_tunerf <- cv_prep_tunerf %>% 
+  mutate(validate_rmse = map2_dbl(.x = validate_actual, .y = validate_predicted, ~ rmse(.x, .y)))
+         
+# Calculate the mean validate_mae for each mtry used  
+cv_eval_tunerf %>% 
+  group_by(mtry) %>% 
+  summarise(mean_rmse = mean(validate_rmse))
+```
+
+## Linear regression approach
+
+```{r}
+rm(list = ls(all.names = TRUE))
+gc()
+memory.limit()
+memory.size()
+
+library(tidyverse)
+library(tictoc)
+library(Metrics)
+library(caret)
+
+tic()
+
+load("tidy_edx.RData")
+load("tidy_validation.RData")
+
+set.seed(1234)
+
+
+sample <- sample_n(tidy_edx, 0.05 * nrow(tidy_edx))
+
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           p = 0.8)
+
+
+a <- train(rating ~ movieId + userId, data = sample,
+           method = "lm",
+           trControl = fitControl,
+           verbose= FALSE)
+
+actual_rating <- tidy_validation$rating
+
+predict_rating <- predict(a, tidy_validation)
+
+rmse(actual_rating, predict_rating)
+#1.052527
+toc()
+```
+
+
+```{r}
+rm(list = ls(all.names = TRUE))
+gc()
+memory.limit()
+memory.size()
+
+library(tidyverse)
+library(ranger)
+library(rsample)
+library(tictoc)
+library(Metrics)
+library(caret)
+
+tic()
+
+load("tidy_edx.RData")
+load("tidy_validation.RData")
+
+set.seed(1234)
+
+sample <- sample_n(tidy_edx, 0.05 * nrow(tidy_edx))
+
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           p = 0.8)
+
+
+a <- train(rating ~ movieId + userId + date_of_rating, data = sample,
+           method = "lm",
+           trControl = fitControl,
+           verbose= FALSE)
+
+actual_rating <- tidy_validation$rating
+
+predict_rating <- predict(a, tidy_validation)
+
+rmse(actual_rating, predict_rating)
+1.051857
+toc()
+```
+
+```{r}
+rm(list = ls(all.names = TRUE))
+gc()
+memory.limit()
+memory.size()
+
+library(tidyverse)
+library(ranger)
+library(rsample)
+library(tictoc)
+library(Metrics)
+library(caret)
+
+tic()
+
+load("tidy_edx.RData")
+load("tidy_validation.RData")
+
+set.seed(1234)
+
+sample <- sample_n(tidy_edx, 0.1 * nrow(tidy_edx))
+
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           p = 0.8)
+
+
+a <- train(rating ~ movieId + userId + genres, data = sample,
+           method = "lm",
+           trControl = fitControl,
+           verbose= FALSE)
+
+actual_rating <- tidy_validation$rating
+
+predict_rating <- predict(a, tidy_validation)
+
+rmse(actual_rating, predict_rating)
+#1.045722
+#180.53 sec elapsed
+toc()
+```
+
+
+```{r}
+
+rm(list = ls(all.names = TRUE))
+gc()
+memory.limit()
+memory.size()
+
+library(tidyverse)
+library(ranger)
+library(rsample)
+library(tictoc)
+library(Metrics)
+library(caret)
+
+tic()
+
+load("tidy_edx.RData")
+load("tidy_validation.RData")
+
+set.seed(1234)
+
+sample <- sample_n(tidy_edx, 0.1 * nrow(tidy_edx))
+
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           p = 0.8)
+
+
+a <- train(rating ~ movieId + userId + genres + date_of_rating, data = sample,
+           method = "lm",
+           trControl = fitControl,
+           verbose= FALSE)
+
+actual_rating <- tidy_validation$rating
+
+predict_rating <- predict(a, tidy_validation)
+
+rmse(actual_rating, predict_rating)
+
+toc()
+```
+
+
+```{r}
+rm(list = ls(all.names = TRUE))
+gc()
+memory.limit()
+memory.size()
+
+library(tidyverse)
+library(tictoc)
+library(Metrics)
+library(caret)
+
+tic()
+
+load("tidy_edx.RData")
+load("tidy_validation.RData")
+
+set.seed(1234)
+
+
+subset_tidy_edx <- tidy_edx %>% 
+  group_by(userId) %>% 
+  mutate(count = n()) %>%
+  filter(count >= 100) %>% 
+  ungroup(userId) %>% 
+  select(-count)
+ 
+
+sample <- sample_n(subset_tidy_edx, 0.001 * nrow(tidy_edx))
+
+rm(tidy_edx)
+gc()
+
+# set up 10-fold cross validation procedure
+train_control <- trainControl(
+  method = "cv", 
+  number = 5
+)
+
+# train model
+model_lm <- train(rating ~ movieId + userId + date_of_rating + genres + movie_year,
+                  data = sample,
+                  method = "brnn",
+                  trControl = train_control
+)
+
+
+
+actual_rating <- tidy_validation$rating
+predict_rating <- predict(model_lm, tidy_validation)
+
+rmse(actual_rating, predict_rating)
+#1.1015
+#1405.8 sec elapsed
+toc()
+
+```
+```{r}
+rm(list = ls(all.names = TRUE))
+gc()
+memory.limit()
+memory.size()
+
+library(tidyverse)
+library(ranger)
+library(rsample)
+library(tictoc)
+library(Metrics)
+library(caret)
+library(Rborist)
+
+tic()
+
+load("tidy_edx.RData")
+load("tidy_validation.RData")
+
+set.seed(1234)
+
+
+subset_tidy_edx <- tidy_edx %>% group_by(userId) %>% mutate(count = n()) %>%
+  filter(count >= 1000) %>% ungroup(userId) %>% select(-count)
+
+
+sample <- sample_n(subset_tidy_edx, 0.01 * nrow(tidy_edx))
+
+sample <- sample %>% mutate(rating = as.factor(rating))
+
+# Create the upsampled training set
+
+up_train <- upSample(x = select(sample, -rating),
+                     y = sample$rating,
+                     yname = "rating") %>% as_tibble()
+
+# Count the number of each type of Remote employee
+up_train %>%
+  count(rating)
+
+up_train <- up_train %>% mutate(rating = as.double(rating))
+
+rm(subset_tidy_edx, tidy_edx)
+
+model_ranging <- ranger(formula = rating ~.,
+                        data = up_train,
+                        mtry = 4, num.trees = 100, seed = 42)
+
+
+actual_rating <- tidy_validation$rating
+
+predict_rating <- predict(model_ranging, tidy_validation)$predictions
+
+rmse(actual_rating, predict_rating)
+
+toc()
+#3.250245
+#364.72 sec elapsed
+```
+
+```{r}
+rm(list = ls(all.names = TRUE))
+gc()
+memory.limit()
+memory.size()
+
+library(tidyverse)
+library(ranger)
+library(rsample)
+library(tictoc)
+library(Metrics)
+library(caret)
+library(Rborist)
+
+tic()
+
+load("tidy_edx.RData")
+load("tidy_validation.RData")
+
+set.seed(1234)
+
+
+subset_tidy_edx <- tidy_edx %>% group_by(userId) %>% mutate(count = n()) %>%
+  filter(count >= 1000) %>% ungroup(userId) %>% select(-count)
+
+
+sample <- sample_n(subset_tidy_edx, 0.001 * nrow(tidy_edx))
+
+sample <- sample %>% mutate(rating = as.factor(rating))
+
+# Create the upsampled training set
+
+up_train <- upSample(x = select(sample, -rating),
+                     y = sample$rating,
+                     yname = "rating") %>% as_tibble()
+
+# Count the number of each type of Remote employee
+up_train %>%
+  count(rating)
+
+up_train <- up_train %>% mutate(rating = as.double(rating))
+
+rm(subset_tidy_edx, tidy_edx)
+
+model_ranging <- ranger(formula = rating ~.,
+                        data = up_train,
+                        mtry = 4, num.trees = 500, seed = 42)
+
+
+actual_rating <- tidy_validation$rating
+
+predict_rating <- predict(model_ranging, tidy_validation)$predictions
+
+rmse(actual_rating, predict_rating)
+
+toc()
+#3.169494
+#351.3 sec elapsed
+```
+
+```{r}
+rm(list = ls(all.names = TRUE))
+gc()
+memory.limit()
+memory.size()
+
+library(tidyverse)
+library(ranger)
+library(rsample)
+library(tictoc)
+library(Metrics)
+library(caret)
+library(Rborist)
+
+tic()
+
+load("edx.RData")
+load("validation.RData")
+
+load("tidy_edx.RData")
+load("tidy_validation.RData")
+
+set.seed(1234)
+
+
+subset_tidy_edx <- tidy_edx %>% group_by(movieId) %>% mutate(count = n()) %>%
+  filter(count >= 1000) %>% ungroup(movieId) %>% select(-count) %>%
+  group_by(userId) %>% mutate(count = n()) %>% filter(count >= 100) %>% ungroup(userId) %>% select(-count)
+ 
+test_index <- createDataPartition(subset_tidy_edx$rating, time = 1, p = 0.1, list = FALSE)
+
+sample <- subset_tidy_edx %>% slice(test_index)
+
+sample1 <- sample %>% group_by(movieId) %>% summarize(n_genres = n_distinct(genres))
+
+sample2 <- sample %>% group_by(movieId) %>% 
+  mutate(n_genres = n_distinct(genres)) %>% 
+  ungroup(movieId)
+
+model_ranging <- ranger(formula = rating ~ userId + movieId + date_of_rating + movie_year + n_genres,
+                        data = sample2,
+                        mtry = 1, num.trees = 100, seed = 42)
+
+tidy_validation <- tidy_validation %>% group_by(movieId) %>% 
+  mutate(n_genres = n_distinct(genres)) %>% 
+  ungroup(movieId)
+
+actual_rating <- tidy_validation$rating
+
+
+predict_rating <- predict(model_ranging, tidy_validation)$predictions
+
+rmse(actual_rating, predict_rating)
+
+
+
+toc()
+0.9903912
+```
+
