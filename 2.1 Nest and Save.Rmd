@@ -49,10 +49,10 @@ if(!require(rsample)) install.packages("rsample", repos = "http://cran.us.r-proj
 
 ```{r}
 #Load edx data from my workspace "HarvardX_Capstone_MovieLens"
-load("C:/Tran Phu Hoa workspace/1. Current/HarvardX_Capstone_MovieLens_/MediaLens_data.RData")
-load("C:/Tran Phu Hoa workspace/1. Current/HarvardX_Capstone_MovieLens_/tidy_edx.RData")
-load("C:/Tran Phu Hoa workspace/1. Current/HarvardX_Capstone_MovieLens_/edx1.RData")
-load("C:/Tran Phu Hoa workspace/1. Current/HarvardX_Capstone_MovieLens_/validate_tidy_edx.RData")
+load("C:/Tran Phu Hoa workspace/1. Current/HarvardX_Capstone/MediaLens_data.RData")
+load("C:/Tran Phu Hoa workspace/1. Current/HarvardX_Capstone/tidy_edx.RData")
+load("C:/Tran Phu Hoa workspace/1. Current/HarvardX_Capstone/edx1.RData")
+load("C:/Tran Phu Hoa workspace/1. Current/HarvardX_Capstone/validate_tidy_edx.RData")
 ```
 
 ## Nest and save data

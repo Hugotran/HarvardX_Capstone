@@ -559,3 +559,368 @@ toc()
 0.9903912
 ```
 
+## Bayesian Regularized Neural Networks
+
+
+```{r}
+
+# Remove and free up working space
+
+rm(list = ls(all.names = TRUE))
+gc()
+memory.limit()
+memory.size()
+
+# Load necessary packages
+
+library(tidyverse)
+library(ranger)
+library(rsample)
+library(tictoc)
+library(Metrics)
+library(caret)
+
+
+
+tic()
+
+load("tidy_edx.RData")
+load("tidy_validation.RData")
+
+set.seed(2019)
+
+test_index <- createDataPartition(tidy_edx$rating, time = 1, p = 0.8, list = FALSE)
+
+train_data <- tidy_edx %>% slice(test_index)
+test_data <- tidy_edx %>% slice(-test_index)
+
+
+#Use semi_join() to ensure that all users and movies in the testing data are also in the training data
+
+test_data <- test_data %>% 
+  semi_join(train_data, by = "movieId") %>%
+  semi_join(train_data, by = "userId")
+
+#Subset the train_data
+
+subset_train_data <- train_data %>% 
+  group_by(movieId) %>% 
+  mutate(count = n()) %>%
+  filter(count >= 1000) %>% 
+  ungroup(movieId) %>% 
+  select(-count)
+ 
+test_index <- createDataPartition(subset_train_data$rating, time = 1, p = 0.001, list = FALSE)
+
+sample <- subset_train_data %>% slice(test_index)
+
+
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           p = 0.8)
+
+
+model_brnn <- train(rating ~ movieId + userId + genres + date_of_rating,
+           data = sample,
+           method = "brnn",
+           trControl = fitControl,
+           verbose= FALSE)
+
+actual_rating <- test_data$rating
+
+predict_rating <- predict(model_brnn, test_data)
+
+rmse(actual_rating, predict_rating)
+
+
+toc()
+#1.046815
+#133.58 sec elapsed
+#> memory.size()
+#[1] 4100.72
+```
+
+
+```{r}
+# Remove and free up working space
+
+rm(list = ls(all.names = TRUE))
+gc()
+memory.limit()
+memory.size()
+
+# Load necessary packages
+
+library(tidyverse)
+library(ranger)
+library(rsample)
+library(tictoc)
+library(Metrics)
+library(caret)
+
+
+
+tic()
+
+load("tidy_edx.RData")
+load("tidy_validation.RData")
+
+set.seed(2019)
+
+test_index <- createDataPartition(tidy_edx$rating, time = 1, p = 0.8, list = FALSE)
+
+train_data <- tidy_edx %>% slice(test_index)
+test_data <- tidy_edx %>% slice(-test_index)
+
+
+#Use semi_join() to ensure that all users and movies in the testing data are also in the training data
+
+test_data <- test_data %>% 
+  semi_join(train_data, by = "movieId") %>%
+  semi_join(train_data, by = "userId")
+
+#Subset the train_data
+
+subset_train_data <- train_data %>% 
+  group_by(userId) %>% 
+  mutate(count = n()) %>%
+  filter(count >= 100) %>% 
+  ungroup(userId) %>% 
+  select(-count)
+ 
+
+sample <- sample_n(subset_train_data, 0.0001 * nrow(train_data))
+
+rm(tidy_edx)
+gc()
+
+# set up 10-fold cross validation procedure
+
+train_control <- trainControl(
+  method = "cv", 
+  number = 5
+)
+
+# train model
+model_brnn <- train(rating ~ movieId + userId + date_of_rating + genres + movie_year,
+                  data = sample,
+                  method = "brnn",
+                  trControl = train_control
+)
+
+
+
+actual_rating <- test_data$rating
+
+predict_rating <- predict(model_brnn, test_data)
+
+rmse(actual_rating, predict_rating)
+#1.048848
+#96.31 sec elapsed
+#> memory.size()
+#[1] 6175.41
+toc()
+
+```
+
+
+## Quantile Regression Neural Network with caret
+
+
+```{r}
+
+# Remove and free up working space
+
+rm(list = ls(all.names = TRUE))
+gc()
+memory.limit()
+memory.size()
+
+# Load necessary packages
+
+library(tidyverse)
+library(ranger)
+library(rsample)
+library(tictoc)
+library(Metrics)
+library(caret)
+
+
+
+tic()
+
+load("tidy_edx.RData")
+load("tidy_validation.RData")
+
+set.seed(2019)
+
+test_index <- createDataPartition(tidy_edx$rating, time = 1, p = 0.8, list = FALSE)
+
+train_data <- tidy_edx %>% slice(test_index)
+test_data <- tidy_edx %>% slice(-test_index)
+
+
+#Use semi_join() to ensure that all users and movies in the testing data are also in the training data
+
+test_data <- test_data %>% 
+  semi_join(train_data, by = "movieId") %>%
+  semi_join(train_data, by = "userId")
+
+#Subset the train_data
+
+subset_train_data <- train_data %>% 
+  group_by(userId) %>% 
+  mutate(count = n()) %>%
+  filter(count >= 100) %>% 
+  ungroup(userId) %>% 
+  select(-count)
+ 
+
+sample <- sample_n(subset_train_data, 0.0001 * nrow(train_data))
+
+rm(tidy_edx)
+gc()
+
+# set up 10-fold cross validation procedure
+train_control <- trainControl(
+  method = "cv", 
+  number = 5)
+
+# train model
+model_qrnn <- train(rating ~ movieId + userId + date_of_rating + genres + movie_year,
+                  data = sample,
+                  method = "qrnn",
+                  trControl = train_control
+)
+
+
+
+actual_rating <- test_data$rating
+
+predict_rating <- predict(model_qrnn, test_data)
+
+rmse(actual_rating, predict_rating)
+#1.07381
+
+#946.59 sec elapsed
+
+toc()
+
+```
+
+
+```{r What will happen if we have better dataset, echo = TRUE}
+library(tidyverse)
+library(Metrics)
+library(caret)
+
+load("tidy_edx.RData")
+load("tidy_validation.RData")
+
+set.seed(2019)
+
+test_index <- createDataPartition(tidy_edx$rating, time = 1, p = 0.8, list = FALSE)
+
+train_data <- tidy_edx %>% slice(test_index)
+test_data <- tidy_edx %>% slice(-test_index)
+
+test_data <- test_data %>% 
+  semi_join(train_data, by = "movieId") %>%
+  semi_join(train_data, by = "userId")
+
+#Subset the train_data
+
+subset_train_data <- train_data %>% 
+  group_by(movieId) %>% 
+  mutate(count = n()) %>%
+  filter(count >= 1000) %>% 
+  ungroup(movieId) %>% 
+  select(-count) %>%
+  group_by(userId) %>% 
+  mutate(count = n()) %>% 
+  filter(count >= 100) %>% 
+  ungroup(userId) %>% 
+  select(-count)
+
+test_data <- test_data %>% 
+  semi_join(subset_train_data, by = "movieId") %>%
+  semi_join(subset_train_data, by = "userId")
+
+# Set up a Lambdas vector 
+
+lambdas <- seq(0, 10, 0.25)
+
+# Build a function to run Movie-user effect model with different values of lambdas, and calculate their RMSE 
+
+rmses <- sapply(lambdas, function(l){
+  
+  mean_rating <- mean(subset_train_data$rating)
+  
+  b_i <- subset_train_data %>% 
+    group_by(movieId) %>%
+    summarize(b_i = sum(rating - mean_rating)/(n()+l))
+  
+  b_u <- subset_train_data %>% 
+    left_join(b_i, by="movieId") %>%
+    group_by(userId) %>%
+    summarize(b_u = sum(rating - b_i - mean_rating)/(n()+l))
+  
+  movie_user_effect_predicted_ratings <- 
+    test_data %>% 
+    left_join(b_i, by = "movieId") %>%
+    left_join(b_u, by = "userId") %>%
+    mutate(pred = mean_rating + b_i + b_u) %>%
+    .$pred
+  
+  return(rmse(movie_user_effect_predicted_ratings, test_data$rating))
+})
+
+
+# Visualize the rmse and lambdas to observe the optimal value of lambda
+
+qplot(lambdas, rmses)  
+
+
+# Pick the optimal lambda
+
+lambda <- lambdas[which.min(rmses)]
+lambda
+
+mean_rating <- mean(subset_train_data$rating)
+
+glimpse(tidy_validation)
+
+tidy_validation <- tidy_validation %>% 
+  semi_join(subset_train_data, by = "movieId") %>%
+  semi_join(subset_train_data, by = "userId")
+
+glimpse(tidy_validation)
+
+b_i <- subset_train_data %>% 
+  group_by(movieId) %>%
+  summarize(b_i = sum(rating - mean_rating)/(n()+lambda))
+
+b_u <- subset_train_data %>% 
+  left_join(b_i, by="movieId") %>%
+  group_by(userId) %>%
+  summarize(b_u = sum(rating - b_i - mean_rating)/(n()+lambda))
+
+movie_user_effect_predicted_ratings <- 
+  tidy_validation %>% 
+  left_join(b_i, by = "movieId") %>%
+  left_join(b_u, by = "userId") %>%
+  mutate(pred = mean_rating + b_i + b_u) %>%
+  .$pred
+
+movie_user_effect_rmse <- rmse(movie_user_effect_predicted_ratings, tidy_validation$rating)
+movie_user_effect_rmse
+
+# Report the RMSE of the Movie-User effect model with the optimal lambda
+
+RMSE_results <- bind_rows(RMSE_results,
+                          data_frame(Model ="Regularized movie-user effect model",  
+                                     RMSE = min(rmses)))
+RMSE_results %>% knitr::kable()
+
+```
+

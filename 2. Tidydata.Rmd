@@ -32,8 +32,8 @@ if(!require(rsample)) install.packages("rsample", repos = "http://cran.us.r-proj
 
 ## Load edx data
 ```{r}
-#Load edx data from my workspace "HarvardX_Capstone_MovieLens"
-load("C:/Tran Phu Hoa workspace/1. Current/HarvardX_Capstone_MovieLens_/MediaLens_data.RData")
+#Load edx data from my workspace "HarvardX_Capstone"
+load("C:/Tran Phu Hoa workspace/1. Current/HarvardX_Capstone/MediaLens_data.RData")
 ```
 
 ## Create a tidy version of edx data called "tidy_edx"
