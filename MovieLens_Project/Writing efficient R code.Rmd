@@ -1,0 +1,551 @@
+---
+title: "Writing efficient R Code"
+author: "Trần Phú Hòa"
+date: "March 2, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+One of the most common tasks we perform is reading in data from CSV files. However, for large CSV files this can be slow. One neat trick is to read in the data and save as an R binary file (rds) using saveRDS(). To read in the rds file, we use readRDS().
+
+Note: Since rds is R's native format for storing single objects, you have not introduced any third-party dependencies that may change in the future.
+
+```{r}
+# How long does it take to read movies from CSV?
+system.time(read.csv("movies.csv"))
+
+# How long does it take to read movies from RDS?
+system.time(readRDS("movies.rds"))
+
+```
+
+
+Using system.time() is convenient, but it does have its drawbacks when comparing multiple function calls. The microbenchmark package solves this problem with the microbenchmark() function.
+
+The microbenchmark() function makes it easier to compare multiple function calls at once by compiling all the relevant information in a data frame. It does this by running each function call multiple times, recording the time it took for the function to run each time, then computing summary statistics for each expression as you can see here.
+
+```{r Microbenchmark Elapsed time}
+# Load the microbenchmark package
+library(microbenchmark)
+
+# Compare the two functions
+compare <- microbenchmark(read.csv("movies.csv"), 
+                          readRDS("movies.rds"), 
+                          times = 10)
+
+# Print compare
+compare
+```
+
+#How good is your machine?
+For many problems your time is the expensive part. If having a faster computer makes you more productive, it can be cost effective to buy one. However, before you splash out on new toys for yourself, your boss/partner may want to see some numbers to justify the expense. Measuring the performance of your computer is called benchmarking, and you can do that with the benchmarkme package.
+
+```{r}
+install.packages("benchmarkme")
+library(benchmarkme)
+
+#Run each benchmark 3 times
+res <- benchmark_std(runs = 3)
+plot(res)
+
+upload_results(res)
+```
+
+## Timings - growing a vector
+
+Growing a vector is one of the deadly sins in R; you should always avoid it.
+
+# What is code profiling
+
+# Load the microbenchmark package
+
+```{r}
+library(microbenchmark)
+```
+
+# The previous data frame solution is defined
+# d() Simulates 6 dices rolls
+
+```{r}
+d <- function() {
+  data.frame(
+    d1 = sample(1:6, 3, replace = TRUE),
+    d2 = sample(1:6, 3, replace = TRUE)
+  )
+}
+```
+
+# Complete the matrix solution
+
+```{r}
+m <- function() {
+  matrix(sample(1:6, 6, replace = TRUE), ncol = 2)
+}
+```
+
+# Use microbenchmark to time m() and d()
+
+```{r}
+microbenchmark(
+ data.frame_solution = d(),
+ matrix_solution     = m()
+)
+```
+
+
+#CPUs 
+## How many cores does this machine have?
+The parallel package has a function detectCores() that determines the number of cores in a machine.
+
+```{r}
+library("parallel")
+detectCores()
+
+library("benchmarkme")
+get_cpu()
+```
+
+What sort of problems benefit from parallel computing?
+* Not every analysis can make use of multiple cores
+* Many statistical algorithms can only use a single core
+
+
+RULE OF THUMB: Answer this question to know whether we can run multi-cores "Can the loop be run forward and backwards?"
+```{r Possible to run multi-cores}
+# We can do forward loop.
+for (i in 1:8)
+  sims[i] <- monte_carlo_simulation()
+# We can do backward loop to get the same result as above.
+for(i in 8:1)
+  sim[i] <- monte_carlo_simulation()
+combine(sims)
+```
+
+
+The parallel package
+
+```{r}
+library(parallel) #load the package
+copies_of_r <- 7 # specify the number of cores
+cl <- makeCluster(copies_of_r) #Create a cluster object
+parApply(cl, m, 1, median) # swap to parApply()
+stopCluster(cl) #stop cluster function
+
+```
+You should benchmark you parallel solution with the normal one you use to testify its speed.
+
+sapply() function apply a function to each value of a value
+
+Bootstrapping
+* In a perfect world, we would resample from the population, but we can't. Instead, we assume the original sample is representative of the population
+** 1. Sample with replacement from your data (the same point could appear multiple times)
+** 2. Calculate the correlation statistics from your new sample
+** 3. Repeat
+
+```{r A single bootstrap}
+bootstrap <- function(data_set){
+  # Sample with replacement
+  s <- sample(1:nrow(data_set), replace = True)
+  new_data <- data_set[s,]
+  
+  # Calculate the correlation
+  cor(new_data$Attack, new_data$Defense)
+}
+```
+
+```{r 100 independent bootstrap simulations}
+sapply(1:100, function(i) bootstrap(pokemon))
+
+```
+
+
+```{r Converting to parallel}
+library(parallel) # load the package
+no_of_cores <- 7 # Specify the number of cores
+cl <- makeCluster(no_of_cores) # Create a cluster object
+clusterExport(cl, c("bootstrap", "pokemon")) # Export functions/data
+parSapply(cl, 1:100, function(i) bootstrap(pokemon))
+stopCluster(cl) # Stop
+```
+
+
+```{r Using parSapply}
+# Create a cluster via makeCluster (2 cores)
+cl <- makeCluster(2)
+
+# Export the play() function to the cluster
+clusterExport(cl, c("play"))
+
+# Parallelize this code
+res <- sapply(1:100, function(i) play())
+parSapply(cl, 1:100, function(i) play())
+# Stop the cluster
+stopCluster(cl)
+```
+
+## Timings parSapply()
+Running the dice game is embarrassingly parallel. These types of simulations usually (but not always) produce a good speed-up. As before, we can use microbenchmark() or system.time(). For simplicity, we'll use system.time() in this exercise.
+
+The play() function has been defined in your workspace. We'll assume that we want to play one hundred thousand games.
+
+* Set no_of_games to 1e5.
+* Use system.time() to time play() being repeatedly called in serial.
+* Call sapply() with 1:no_of_games and the play() wrapper function.
+* Assign the result to serial.
+Wrap this call in system.time() to time it.
+* Create a 4 core cluster object and export the play() function to it.
+* Use system.time() to time play() being repeatedly called in parallel.
+* Rework the code you used to create serial, but make it work in parallel.
+
+```{r Timings parSapply}
+# Set the number of games to play
+no_of_games <- 1e5
+
+## Time serial version
+system.time(serial <- sapply(1:no_of_games, function(i) play()))
+
+## Set up cluster
+cl <- makeCluster(4)
+clusterExport(cl, "play")
+
+## Time parallel version
+system.time(par <- parSapply(cl, 1:no_of_games, function(i) play()))
+
+## Stop cluster
+stopCluster(cl)
+```
+
+# VISUALIZING BIG DATA WITH TRELLISCOPE
+## Daily ride counts
+A useful way to tabulate and visualize cab rides is by looking at the number of rides according to the calendar day. In this exercise, you'll compute this summary and examine how daily ridership varies by time and the day of week.
+
+The tx data set is preloaded for you.
+
+* Create a daily summary, grouping by the date of pickup (pickup_date) and counting the number of rides, calling the new variable n_rides.
+* Plot the result using ggplot2's geom_line(), with pickup_date on the x-axis and n_rides on the y-axis.
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Summarize taxi ride count by pickup day
+daily_count <- tx %>%
+  group_by(pickup_date) %>%
+  summarise(n_rides = n())
+
+# Create a line plot
+ggplot(daily_count, aes(x = pickup_date, y = n_rides)) +
+  geom_line()
+
+#Beautiful! Notice the day of week ridership pattern. In the next section, we'll learn a technique that can help us investigate this component more deeply. We also see low ridership on what appear to be holidays, and a significant consistent uptick in usage when the school year begins in September.
+```
+
+Distribution of cab fare amount
+Let's learn about how much cab rides cost in NYC and look at a histogram of the total cab fare. Since the fare amount is likely to be highly skewed, we will plot it with the x-axis in the log scale.
+
+The tx data set is preloaded for you.
+
+* Plot the the distribution of the total cab fare,total_amount using geom_histogram().
+* In the last line, apply a log base 10 scale to the x-axis using scale_x_log10(). Note that you will receive a warning message about 62 data points that have a total fare of $0. These points are ignored since the logarithm is infinite.
+
+```{r}
+library(ggplot2)
+
+# Create a histogram of total_amount
+ggplot(tx, aes(total_amount)) +
+  geom_histogram() +
+  scale_x_log10()
+```
+
+
+Adding more detail to summaries
+* Binning two or more continuous variables to visualize point distribution
+** Binning continuous variables using "geom_hex()"
+**Relationship between trip duration and total fare
+We would assume that there is a relationship between the total cab fare and the duration of the trip. Since there are too many data points to make a scatterplot, let's use a hexagon-binned plot to investigate this relationship.
+
+tx is available for you in your workspace.
+
+*** Use hexagon bins to visualize the bivariate distribution of total_amount (y-axis) vs. trip_duration (x-axis).
+*** Set the bins argument of geom_hex() to 75.
+*** Since both variables are highly skewed, rescale both the x and y axes to log base 10. Note that these transformations will generate some warnings about a relatively small number of records with zero trip duration or fare amount.
+
+```{r Relationship between trip duration and total fare}
+library(ggplot2)
+
+# Create a hexagon-binned plot of total_amount vs. trip_duration
+ggplot(tx, aes(x = trip_duration, y = total_amount)) +
+  geom_hex(bins = 75) +
+  scale_x_log10() +
+  scale_y_log10()
+
+#Awesome! There is a relationship between trip duration and total fare, but there is a lot of noise and some interesting cases, for example, of very short trips that are very expensive.
+```
+
+```{r  Binning continuous variables using "geom_hex()"}
+ggplot(tx, aes(tip_amount, total_amount)) +
+  geom_hex(bins = 75) +
+  scale_x_log10() + scale_y_log10() +
+  geom_abline(slope = 1, intercept = 0)
+```
+
+* Grouping or faceting summary computations by additional variables
+** Using "facet_wrap()"
+*** Faceting daily rides
+We noticed some interesting behavior when we looked at daily ride counts faceted by day-of-week. Let's investigate whether faceting on additional variables yields any new insights. Here we will see if there are different day-of-week patterns when also looking at the payment types of cash or credit card.
+
+tx is available for you in your workspace.
+
+*** After filtering to just cash and credit transactions, create a summary by day of week and payment type count using dplyr, grouping by the pickup_date, pickup_dow, payment_type.
+*** Inside summarise(), count the number of rides and assign the result to a new variable n_rides.
+Plot the result using the daily_count summary dataset as an input to ggplot() and using geom_point(), with pickup_date on the x-axis and n_rides on the y-axis.
+*** Use facet_grid() to facet with payment_type as rows and day of week pickup_dow as columns.
+*** Note that the coord_fixed() code constrains the aspect ratio of the resulting plot to help highlight patterns visually.
+
+```{r Faceting daily rides}
+library(dplyr)
+library(ggplot2)
+
+# Summarize taxi rides count by payment type, pickup date, pickup day of week
+daily_count <- tx %>%
+  filter(payment_type %in% c("Card", "Cash")) %>%
+  group_by(payment_type, pickup_date, pickup_dow) %>%
+  summarise(n_rides = n())
+
+# Plot the data
+ggplot(daily_count, aes(x = pickup_date, y = n_rides)) +
+  geom_point() +
+  facet_grid(payment_type ~ pickup_dow) +
+  coord_fixed(ratio = 0.4)
+#You got it! Do you see a different pattern for the cash transactions vs. Card? Cash transactions appear to peak on Saturdays, where card transactions seem to peak midweek.
+```
+
+
+*** faceted by payment type
+The distribution of the total cab fare plot we created earlier was interesting, but we might be able to gain additional insight into this distribution by investigating whether it varies with respect to another variable. In this exercise, we'll look at the tip amount portion of the cab fare distribution and see if it is different for different payment types by creating a histogram and faceting on payment type.
+
+tx is preloaded into your workspace for you.
+
+*** Create a histogram of tip_amount + 0.01 (a cent to each tip because we will take a log transform and there are tips that are zero).
+*** Use scale_x_log10() to transform the x-axis.
+*** Use facet_wrap() to facet by payment_type. To help visually compare distributions, set the number of columns to 1 and make the y-axis scales free by specifying the scales to be "free_y".
+
+```{r faceted by payment type}
+
+```
+
+```{r}
+ggplot(daily_count, aes(pickup_date, n_rides)) +
+  geom_point() +
+  facet_wrap(~ pickup_dow) +
+  geom_smooth(method = "rlm", se = FALSE)
+```
+
+Visualize subsets
+
+*** Comparing fare distribution by payment type
+
+We have seen that there is no tip for cash payments. Does this mean people who pay with cash don't tip, or does it mean that tips aren't recorded when people pay with cash? For similar routes, we would expect the distributions of total fare to be identical regardless of payment type. In this exercise, we will create a quantile plot comparing the distribution of total fare by payment type and compare that with the original plot in a different facet.
+
+*** A dataset amount_compare has been created for you that contains variables payment_type, amount, and amount_type. amount_type distinguishes between values that reflect a total payment vs. a payment with no tip.
+
+*** Inspect the amount_compare dataset prior to completing the exercise by printing it to the console to understand its structure to help with the plot specification.
+*** Use geom_qq() to create a quantile plot of the total fare amount, amount. Be sure to specify distribution = stats::qunif.
+*** Make sure separate quantile plots are made for each payment type by coloring by payment type such that each distribution is superposed on the same plot.
+*** Show the distribution comparisons for each amount_type by faceting.
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Get data ready to plot
+amount_compare <- tx_pop %>%
+  mutate(total_no_tip = total_amount - tip_amount) %>%
+  select(total_amount, total_no_tip, payment_type) %>%
+  gather(amount_type, amount, -payment_type)
+
+# Quantile plot
+ggplot(amount_compare, aes(sample = amount, color = payment_type)) +
+  geom_qq(distribution = stats::qunif, shape = 21) +
+  facet_wrap(~ amount_type) +
+  ylim(c(3, 20))
+# Stupendous! It looks like credit cards transactions are the only ones that have tips. We'll dig into why this might be in the next section.
+
+```
+
+# Faceting with TrelliscopeJS
+
+```{r Faceting on continent}
+ggplot(gapminder, aes(year, lifeExp, group = country, color = continent)) +
+  geom_line() +
+  facet_wrap(~ continent, nrow = 1) +
+  guides(color = FALSE)
+```
+
+```{r Faceting on country}
+ggplot(gapminder, aes(year, lifeExp)) + 
+  geom_line() +
+  facet_wrap(~ country + continent)
+```
+
+Trelliscope faceting gapminder by country
+With a subset of the gapminder data (just the two countries in Oceania), take the example of life expectancy vs. year faceted by country and continent and create a TrelliscopeJS display.
+
+The gapminder data set is available for you in your workspace.
+
+*** Set the name to "lifeExp_by_country" and desc to "Life expectancy vs. year per country".
+*** Set the initial layout to show 1 row and 2 columns.
+*** Note: Trelliscope displays are best viewed by expanding the HTML Viewer.
+
+```{r}
+library(ggplot2)
+library(trelliscopejs)
+
+ggplot(gapminder, aes(year, lifeExp)) +
+  geom_line() +
+  facet_trelliscope(~ country + continent,
+    name = "lifeExp_by_country",
+    desc = "Life expectancy vs. year per country",
+    nrow = 1, ncol = 2
+  )
+```
+
+# Additional TrelliscopeJS features
+
+```{r}
+gap_life <- select(gapminder, year, lifeExp, country, continent)
+ggplot(gap_life, aes(year, lifeExp)) +
+  geom_point() +
+  facet_trelliscope(~country +continent,
+                    name = "lifeExp_by_country",
+                    desc = "Life expectancy vs. year for 142 countries.",
+                    as_plotly = TRUE)
+```
+
+
+Context-Based Automatic Cognostics
+
+```{r}
+library(ggplot2)
+library(trelliscopejs)
+
+ggplot(gap_life, aes(year, lifeExp)) +
+  geom_point() +
+  facet_trelliscope(~ country + continent,
+    name = "lifeExp_by_country",
+    desc = "Life expectancy vs. year for 142 countries.",
+    nrow = 2, ncol = 3,
+    auto_cog = TRUE
+  )
+```
+
+Axis Limit ranges can be controlled with the "scales" argument.
+
+*Customizing the gapminder display
+Let's put some of these features to the test with our by-country life expectancy trajectory plot. Note that we are again working with just the two countries from Oceania.
+Add a geom_smooth() layer to add a fitted linear model using the "lm" method.
+Set the scales to be "sliced".
+With the linear model layer added to the plot, specify that automatic cognostics should be computed for this display and explore what new cognostics this layer adds to the display.
+
+```{r Customizing the gapminder display}
+library(trelliscopejs)
+library(ggplot2)
+
+# Create the plot
+ggplot(gapminder, aes(year, lifeExp)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_trelliscope(~ country + continent,
+    name = "lifeExp_by_country",
+    desc = "Life expectancy vs. year for 142 countries.",
+    nrow = 1, ncol = 2,
+    # Set the scales
+    scales = "sliced",
+    # Specify automatic cognistics
+    auto_cog = TRUE)
+#Way to go! You can now sort and filter the panels your display on several new cognostics computed based on the fact that you made a scatterplot with a fitted line.
+```
+
+Adding custom cognostics
+Let's create some custom cognostics. To do so, you'll add two new variables to the gapminder data: delta_lifeExp and ihme_link.
+
+Add a new variable called delta_lifeExp to the gapminder data that computes the difference between the first and last observed life expectancy (lifeExp) for each country. Note that the data is already sorted by year.
+Add another variable, ihme_link that links to the country's profile on healthdata.org, using space_to_dash() to replace spaces in country values to dashes. For example, for the country "Costa Rica", the link is "http://www.healthdata.org/Costa-Rica".
+Give the delta_lifeExp variable a description of "Overall change in life expectancy".
+Specify default_label = TRUE to make the ihme_link variable be shown as a label by default.
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(gapminder)
+library(trelliscopejs)
+space_to_dash <- function(x) gsub(" ", "-", x)
+
+# Group by country and create the two new variables
+gap <- gapminder %>%
+  group_by(country) %>%
+  mutate(
+    delta_lifeExp = tail(lifeExp, 1) - head(lifeExp, 1),
+    ihme_link = paste0("http://www.healthdata.org/", space_to_dash(country)))
+
+# Add the description
+gap$delta_lifeExp <- cog(gap$delta_lifeExp, desc = "Overall change in life expectancy")
+# Specify the default label
+gap$ihme_link <- cog(gap$ihme_link, default_label = TRUE)
+
+ggplot(gap, aes(year, lifeExp)) +
+  geom_point() +
+  facet_trelliscope(~ country + continent,
+    name = "lifeExp_by_country",
+    desc = "Life expectancy vs. year.",
+    nrow = 1, ncol = 2,
+    scales = c("same", "sliced"))
+```
+
+# Trelliscope in the Tidyverse
+
+```{r}
+library(dplyr)
+library(ploty)
+
+candlestick_plot <- function(d)
+  plot_ly(d, x = ~date, type = "candlestick",
+          open = ~open, close = ~close,
+          high = ~high, low = ~low)
+candlestick_plot(filter(stocks, symbol == "AAPL"))
+```
+
+Tidyverse: Nested Data Frames
+
+```{r Nested Data Frames}
+by_symbol <- stocks %>%
+  group_by(symbol) %>%
+  nest()
+by_symbol
+```
+
+Tidyverse: Computing on Nested Data Frames
+```{r Tidyverse: Computing on Nested Data frames}
+by_symbol <- mutate(by_symbol,
+                    last_close = map_dbl(data, function(x) tail(x$close, 1)))
+
+by_symbol
+```
+
+Trelliscope in the Tidyverse: Plot columns
+
+```{r Trelliscope in the Tidyverse: Plot columns}
+library(trelliscopejs)
+
+by_symbol <- mutate(by_symbol,
+                    panel = map_plot(data, candlestick_plot))
+
+trelliscope(by_symbol,
+            name = "candlestick_top500",
+            nrow = 2, ncol = 3)
+```
+
+

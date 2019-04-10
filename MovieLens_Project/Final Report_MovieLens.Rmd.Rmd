@@ -1,0 +1,1392 @@
+---
+title: "HarvardX: PH125.9x Data Science \n MovieLens_Predicing Ratings Project"
+author: "Tran Phu Hoa"
+date: "March 25, 2019"
+output: 
+  pdf_document: 
+    number_sections: yes
+    toc: yes
+---
+
+# Introduction
+
+The main purpose of writing this report is to apply what I have learnt about Data Science in eight previous courses of HarvardX Data Science series. It will report the solution of the first challenge of its final course named Data Science: "Capstone". 
+
+The report is expected to replicate a full process of a Data Scientist doing a project, and it will adapt part of the structure which is recommended by Dr. Roger D.Peng in his book called "Report Writing for Data Science in R". Thus, those steps are.
+
+1. Defining the question
+2. Defining the ideal dataset
+4. Obtaining the data
+5. Cleaning the data
+6. Exploratory data analysis
+7. Statistical prediction/modelling
+8. Interpretation of results
+9. Challenging of results
+10. Synthesis and write up
+11. Creating reproducible code
+
+
+# Defining the question
+
+The main goal is to find out a model that can make a prediction for the scores rated by users for different movies. The Root Mean Square Error (RMSE) will be used to evaluate how well models perform.  Models have the lowest RMSE will rank in first place as the best predicting model.
+
+
+# Defining the ideal dataset
+
+The dataset will be the 10M version of the [MovieLens dataset](https://grouplens.org/datasets/movielens/10m/). In order to obtain this dataset, the project will apply codes provided by the course as below.
+
+
+```{r Obtaining the dataset, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+
+#############################################################
+# Create edx set, validation set, and submission file
+#############################################################
+
+# Note: this process could take a couple of minutes
+
+if(!require(tidyverse)) 
+  install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+
+if(!require(caret)) 
+  install.packages("caret", repos = "http://cran.us.r-project.org")
+
+# MovieLens 10M dataset:
+# https://grouplens.org/datasets/movielens/10m/
+# http://files.grouplens.org/datasets/movielens/ml-10m.zip
+
+dl <- tempfile()
+download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+
+ratings <- read.table(text = 
+                        gsub("::", 
+                             "\t",
+                             readLines(unzip(dl, "ml-10M100K/ratings.dat"))),
+                      col.names = 
+                        c("userId", "movieId", "rating", "timestamp"))
+
+movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")),
+                          "\\::",
+                          3)
+
+colnames(movies) <- c("movieId", "title", "genres")
+
+movies <- as.data.frame(movies) %>% 
+  mutate(movieId = as.numeric(levels(movieId))[movieId],
+         title = as.character(title),
+         genres = as.character(genres))
+
+movielens <- left_join(ratings, movies, by = "movieId")
+
+```
+
+
+In addition, the course gives codes to make validation sets as below.
+
+```{r Create validation sets, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+
+# Validation set will be 10% of MovieLens data
+
+set.seed(1)
+test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+edx <- movielens[-test_index,]
+temp <- movielens[test_index,]
+
+# Make sure userId and movieId in validation set are also in edx set
+
+validation <- temp %>% 
+     semi_join(edx, by = "movieId") %>%
+     semi_join(edx, by = "userId")
+
+# Add rows removed from validation set back into edx set
+
+removed <- anti_join(temp, validation)
+edx <- rbind(edx, removed)
+
+rm(dl, ratings, movies, test_index, temp, movielens, removed)
+
+```
+
+
+The "edx" subset will be the main dataset for this analysis and modelling, while the "validation" subset will be used to calculate RMSE for final algorithm.
+
+Save the dataset to the local system, so that it saves the loading times for further analysis.
+
+```{r Save "edx.RData and "validation.RData, echo = TRUE}
+
+save(edx, file = "edx.RData")
+
+save(validation, file = "validation.RData")
+```
+
+
+
+\pagebreak
+
+# Exploring the "edx" dataset
+
+Loading useful packages
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+
+if(!require(tidyverse)) 
+  install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+
+if(!require(lubridate)) 
+  install.packages("lubridate", repos = "http://cran.us.r-project.org")
+
+```
+
+
+Take a look at the dataset using "glimpse" function in "tidyverse" package, and it shows that the "edx" dataset has 9,000,055 observations and 6 variables. There are three types of data including integer, double and character. In fact, "userId" and "timestamp" are coded in integer, "movieId" and "rating" are double, and "title" and "genres" are character. 
+
+```{r Take a look at the dataset, echo = FALSE}
+
+glimpse(edx)
+
+```
+
+
+Look for NA as the missing value in the dataset using "summary" function. The result indicates that there is no missing value in the "edx" dataset.
+
+```{r Find missing values in the dataset, echo = FALSE}
+
+summary(edx)
+
+```
+
+
+There are about 70,000 unique users, and 797 groups of genres. The rates are continuous variables, however, they would be classified as categorical variables with 10 different scores. The number of distinct movie is expected to be the same with the number of titles, however it seems that two movies had the same name. 
+
+```{r , echo = FALSE}
+
+edx %>% summarize(n_users = n_distinct(userId),
+                  n_movies = n_distinct(movieId),
+                  n_rating = n_distinct(rating),
+                  n_title = n_distinct(title),
+                  n_genres = n_distinct(genres),
+                  n_timestamp = n_distinct(timestamp))
+
+```
+
+
+The dataset does not seem to be in the tidy format. The first reason is more than one variables are included in the same column, for example "Boomerang (1992)" can be divided into two columns which are "Movie title" and "Released year". Furthemore, the column "timestamp" looks meaningless, and it should be transformed to date format. In "genres" column, instead of clumping those genres together, it may be better to separate them.
+
+The following activities will tidy up the "edx" dataset.
+
+```{r Transform timestamp to date variable using lubridate package, echo = FALSE}
+
+# Separate variables in "genres", and put them into "genres" column gain
+tidy_edx_sep_genres <- edx %>% separate_rows(genres, sep = "\\|")
+
+# Parse date to "timestamp" variable
+tidy_edx_date <- tidy_edx_sep_genres %>% 
+  mutate(date_of_rating = as_datetime(timestamp)) %>%
+  select(c("userId", "movieId", "rating", "title", "genres", "date_of_rating"))
+
+```
+
+
+Separate "title" column into "title" and "movie_year"
+
+```{r Separate title column into title and movie_year, echo = TRUE}
+
+#Select object "year" in the "title" column, and create "movie_year" variable
+tidy_edx <- tidy_edx_date %>% 
+  mutate(movie_year = str_extract(tidy_edx_date$title, regex("\\(\\d{4}\\)"))) 
+
+#Detect "year" in the title column
+tidy_edx <- tidy_edx %>%
+  mutate(movie_year = str_extract(tidy_edx$movie_year, regex("\\d{4}")))
+
+```
+
+```{r Change the type of movie_year and movieId to integer, echo = TRUE}
+
+tidy_edx <- tidy_edx %>%
+  mutate(movie_year = as.integer(movie_year), movieId = as.integer(movieId))
+
+```
+
+
+Save tidy_edx to the local system.
+
+```{r Save "tidy_edx", echo = FALSE}
+
+save(tidy_edx, file = "tidy_edx.RData")
+
+```
+
+
+Remove unnecessary dataset "tidy_edx_date", "tidy_edx_sep_genres"
+
+```{r}
+
+rm("tidy_edx_date", "tidy_edx_sep_genres")
+
+gc()
+
+```
+
+
+
+Take a look at the dataset
+
+```{r}
+
+glimpse(tidy_edx)
+
+```
+
+
+Identify any missing values
+
+```{r Summary of Tidy_edx dataset, echo = TRUE}
+
+summary(tidy_edx)
+
+```
+
+
+There are about 20 different genres and 90 unique released years for 10,676 movie titles.
+
+```{r Count the number of unique data in each variable, echo = TRUE}
+
+tidy_edx %>% summarize(n_users = n_distinct(userId),
+                  n_movies = n_distinct(movieId),
+                  n_rating = n_distinct(rating),
+                  n_title = n_distinct(title),
+                  n_genres = n_distinct(genres),
+                  n_date = n_distinct(date_of_rating),
+                  n_movieyear = n_distinct(movie_year))
+
+```
+
+
+Plot the histogram of rating
+
+```{r The histogram of rating, echo = TRUE}
+
+tidy_edx %>%
+  ggplot(aes(rating)) + 
+  geom_histogram(binwidth = 0.05, color = "blue") +
+  scale_x_discrete(limits = c(seq(0.5,5,0.5))) + 
+  scale_y_continuous(breaks = c(seq(0, 7000000, 500000))) +
+  xlab("Ratings") +
+  ylab("Number of ratings") + 
+  ggtitle("Histogram of ratings")
+
+```
+
+
+"4.0" score had the highest number of ratings (6,730,401), and "0.5" had the lowest one (215,932).
+
+```{r Calculate the number of rates for each rating, echo = TRUE}
+
+tidy_edx %>% group_by(rating) %>% 
+  summarize(n_rating = n()) %>% 
+  arrange(desc(n_rating))
+
+```
+
+
+Summary statistic of rating
+
+```{r Summary statistic of rating, echo = TRUE}
+
+tidy_edx %>% summarize(mean_rating = mean(rating), 
+                       median_rating = median(rating), 
+                       sd_rating = sd(rating))
+
+```
+
+
+```{r}
+
+tidy_edx %>% group_by(movieId, title) %>%
+  summarize(n_movie = n()) %>% 
+  arrange(desc(n_movie))
+
+```
+
+
+Compute the number of ratings for each movie and then plot it against the year the movie came out. 
+Use the square root transformation on the counts.
+
+Boxplot of number of ratings and released year of movies
+
+```{r Boxplot of number of ratings and released year of movies, echo = TRUE}
+
+tidy_edx %>% group_by(movieId) %>%
+  summarize(n_ratings = n(), 
+            year = as.character(first(movie_year))) %>%
+  qplot(year, n_ratings, data = ., geom = "boxplot") +
+  coord_trans(y = "sqrt") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 6)) +
+  labs(title = "Boxplot of number of ratings and released year of movies", 
+       x = "Released year of movies", 
+       y = "Number of ratings")
+
+```
+
+
+Boxplot of ratings and released year of movies
+
+```{r Boxplot of ratings and released year of movies, echo = TRUE}
+
+tidy_edx %>% group_by(movieId) %>%
+  summarize(mean_rating = mean(rating),
+            year = as.character(first(movie_year))) %>%
+  qplot(year, mean_rating, data = ., geom = "boxplot") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 6)) +
+  labs(title = "Boxplot of ratings and released year of movies",
+       x = "Released year of movies", 
+       y = "Ratings")
+
+```
+
+
+Average ratings in quarters of years
+
+```{r Average ratings in quarters of years, echo = TRUE}
+
+tidy_edx %>% mutate(date = round_date(date_of_rating, unit = "quarter")) %>%
+  group_by(date) %>%
+  summarize(mean_rating = mean(rating), n_rating = n()) %>%
+  ggplot(aes(date, mean_rating, size = n_rating)) +
+  geom_point(alpha = 0.1) +
+  scale_size(name  = "Number of ratings") +
+  geom_smooth() + 
+  theme_light() +
+  labs(title = "Average ratings in quarters of years",
+       x = "Year", 
+       y = "Average of ratings")
+
+```
+
+
+"Genres" seems to effect how users rate, for example, "Film-noir" was scored the highest rate (4.2 points) on average. "Horror" movies had smallest score which was about 0.8.
+
+A first look at relationship between genres of movies and the average of rating
+
+```{r Movie genres and the average of rating, echo = TRUE}
+
+tidy_edx %>% group_by(genres) %>% 
+  summarize(n_rating = n(), 
+            avg_rating = mean(rating), 
+            se_rating = sd(rating)) %>%
+  filter(n_rating >= 1000) %>% 
+  arrange(desc(n_rating)) %>% 
+  ggplot (aes(x=genres, y=avg_rating)) +
+  geom_point() +
+  geom_errorbar(aes(ymin=avg_rating - se_rating, 
+                    ymax=avg_rating + se_rating), 
+                width=0.4, colour="red", 
+                alpha=0.8, size=1.3) +
+  geom_bar(stat="identity", fill="skyblue", alpha=0.7) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1)) +
+  labs(title = "Movie genres and the average of rating",
+       x = "Genres", 
+       y = "Average of rating")
+
+```
+
+
+Other view at the relationship between genres of movies and the average of rating
+
+```{r Other view at movie genres and the average of rating, echo = TRUE}
+
+tidy_edx %>% group_by(genres) %>%
+  summarize(n = n(), 
+            avg_rating = mean(rating), 
+            se = sd(rating)/sqrt(n())) %>%
+  filter(n >= 1000) %>% 
+  mutate(genres = reorder(genres, avg_rating)) %>%
+  ggplot(aes(x = genres, 
+             y = avg_rating, 
+             ymin = avg_rating - 2*se, 
+             ymax = avg_rating + 2*se)) + 
+  geom_point() +
+  geom_errorbar() + 
+  theme(axis.text.x = element_text(angle = 30, hjust = 1)) +
+  labs(title = "Relationship between genres of movies and the average of rating", 
+     x = "Genres", 
+     y = "Average of rating")
+
+```
+
+
+Number of movies produced per year
+
+```{r Movie Production, echo = TRUE}
+
+tidy_edx %>%
+select(movie_year, movieId) %>%
+group_by(movie_year) %>%
+summarise(count = n_distinct(movieId)) %>%
+arrange(desc(count)) %>%
+ggplot(aes(x = movie_year, y = count)) +
+geom_bar(stat = "identity") +
+labs(title = "Movies Production", 
+     x = "Released year of movies", 
+     y = "Number of movies produced") 
+
+```
+
+
+The relationship between movie genres and number of ratings
+
+```{r The relationship between movie genres and number of ratings, echo = TRUE}
+
+tidy_edx %>%
+group_by(genres) %>%
+summarise(count = n()) %>%
+arrange(desc(count)) %>%
+ggplot(aes(x = reorder(genres, -count), y = count)) +
+geom_bar(stat = "identity") +
+scale_y_continuous(breaks = c(seq(0, 7000000, 500000))) +
+theme(axis.text.x = element_text(angle = 30, hjust = 1, vjust = 0)) +
+labs(title = "Movies by Genres", 
+     x = "Movies' genres", 
+     y = "Number of ratings")
+
+```
+
+
+The relationship between movie genres and average of ratings
+
+```{r The relationship between movie genres and average of ratings, echo = TRUE}
+
+tidy_edx %>%
+group_by(genres) %>%
+summarise(mean_rating = mean(rating)) %>%
+arrange(desc(mean_rating)) %>%
+ggplot(aes(x = reorder(genres, -mean_rating), y = mean_rating)) +
+geom_bar(stat = "identity") +
+theme(axis.text.x = element_text(angle = 30, hjust = 1, vjust = 0)) +
+labs(title = "Movies by Genres", 
+     x = "Movies' genres", 
+     y = "Average of ratings")
+
+```
+
+
+Exploring the affect of number of movies in a single period on average rating of that interval
+
+```{r Relationship between average rating and number of movie per week, echo = TRUE}
+
+weekly_rating <- tidy_edx %>% 
+  mutate(date = round_date(date_of_rating, unit = "week")) %>%
+  group_by(date) %>% 
+  nest() %>% 
+  mutate(n_movie = map(data, ~n_distinct(.x$movieId)),
+         mean_rating = map(data, ~mean(.x$rating)))
+
+weekly_rating <- weekly_rating %>% unnest(n_movie,mean_rating)
+
+weekly_rating %>% ggplot(aes(date, mean_rating, size = n_movie)) +
+  geom_point(alpha = 0.1) +
+  scale_size(name  = "Number of movies") +
+  geom_smooth() + 
+  theme_light() +
+  labs(title = "Relationship between average rating and number of movie per week", 
+     x = "Week", 
+     y = "Average of ratings")
+
+```
+
+\pagebreak
+
+
+# Modellling
+## RMSE
+
+```{r}
+# "Metrics" package will be used to calculate RMSE in this project.
+library(Metrics)
+
+# "caret" package will help to create train and test datasets.
+library(caret)
+
+```
+
+
+## Create training data and testing data for machine learning
+
+```{r Create training data and testing data, echo = TRUE}
+
+set.seed(2019)
+
+test_index <- createDataPartition(tidy_edx$rating, time = 1, p = 0.8, list = FALSE)
+
+train_data <- tidy_edx %>% slice(test_index)
+test_data <- tidy_edx %>% slice(-test_index)
+
+```
+
+
+Use semi_join() to make all users and movies in the testing data are in the training data
+
+```{r All users and movies occur in both the test_set and train_set, echo = TRUE}
+
+test_data <- test_data %>% 
+  semi_join(train_data, by = "movieId") %>%
+  semi_join(train_data, by = "userId")
+
+```
+
+
+## Matrix factorization approach
+
+### Load useful packages
+
+```{r}
+library(tidyverse)
+library(tictoc)
+library(Metrics)
+```
+
+### Benchmark model
+
+By using the same predited value for all movies and users, this approach expected to be the simplest possible recommendation system. The model will be the baseline for models comparisons.
+
+A model-based approach seems to fix the expectation as its assumption is to predict the same rating for all movies and all users, and those variations in the prediction would be explained by random variables. 
+
+$$ Y_{u, i} = \mu + \epsilon_{u, i} $$
+
+$\mu$ is the true rating for all movies and users.
+$\epsilon_{u,i}$ are variations contained everythings the model does not explain, and they are assumed to be identical and independent which are sampled from the same distribution centered at zero. 
+
+The mean of rating is about 3.5 points.
+
+```{r Benchmark model, echo = TRUE}
+
+mean_rating <- mean(train_data$rating)
+
+mean_rating
+
+```
+
+
+As all rating will be equal to mean of rating ($\mu$), RMSE of this averaging model will be about 1.061.
+
+```{r RMSE of the Bechmark model, echo = TRUE}
+
+benchmark_rmse <- rmse(test_data$rating, mean_rating)
+
+benchmark_rmse
+
+save(benchmark_rmse, file = "benchmark.RData")
+
+```
+
+
+This gives the baseline RMSE to compare with next modelling approaches.
+
+In order to do better than simply predicting the average rating, we incorporate some of insights we gained during the exploratory data analysis.
+
+
+### Movie effect model
+
+The Explanatory analysis suggests that some movies were rated higher than the others, and the next model will capture this effect by adding $b_{i}$ term which is the average rating for movie i.
+
+$$Y_{u, i} = \mu +b_{i}+ \epsilon_{u, i}$$
+$b_{i}$ is average rating for movie i.
+$b_{i}$ can be calculated by using linear regression function like this.
+
+```{r eval=FALSE, include=FALSE}
+fit <- lm(rating ~ as.factor(movieId), data = train_data)
+```
+
+
+However, this technique will crash the computer as the dataset is big. In fact, it is more efficient to treat $b_{i}$ as the function of the mean of rating minus the overall mean for each movie.
+
+
+```{r Calculate b_i, echo = TRUE}
+
+movie_effect_avgs <- train_data %>%
+  group_by(movieId) %>%
+  summarize(b_i = mean(rating - mean_rating))
+
+```
+
+
+Draw the histogram of b_i
+
+```{r Plot histogram of b_i, echo = TRUE}
+
+movie_effect_avgs %>% 
+  qplot(b_i, 
+        geom ="histogram",
+        bins = 10, data = .,
+        color = I("blue"),
+        ylab = "Number of movies",
+        main = "Number of movies with the computed b_i")
+
+```
+
+
+Predicted values of ratings in test_date using Movie effect model
+
+```{r Predicted values of ratings in test_date using Movie effect model, echo = TRUE}
+
+tic()
+
+movie_effect_predicted_ratings <- mean_rating + test_data %>%
+  left_join(movie_effect_avgs, by = "movieId") %>%
+  .$b_i
+
+toc()
+
+```
+
+
+Calculate RMSE of the Movie effect model
+
+```{r RMSE of the Movie effect model, echo = TRUE}
+
+movie_effect_model_rmse <- rmse(movie_effect_predicted_ratings, test_data$rating)
+
+movie_effect_model_rmse
+
+save(movie_effect_model_rmse, file = "movie_effect_rmse.RData")
+
+```
+
+
+### Movie-User effect model
+
+It is observed that each user will rate differently. The graph using the train_data will show this user effect.
+
+Plot the histogram of b_u with users who rated more than 100 times
+
+```{r Plot the histogram of b_u, echo = TRUE}
+
+train_data %>% 
+  left_join(movie_effect_avgs, by='movieId') %>%
+  group_by(userId) %>%
+  filter(n() >= 100) %>%
+  summarize(b_u = mean(rating - mean_rating - b_i)) %>%
+  qplot(b_u,
+        geom ="histogram",
+        bins = 30, data = .,
+        color = I("black"))
+
+```
+
+
+The movie-user effect model would be
+
+$$Y_{u, i} = \mu + b_{i} + b_{u} + \epsilon_{u, i}$$
+$b_{u}$ is a user effect.
+
+To avoid potential crash using linear regression approach, the movie-user effect model are computed as the sum of overall mean of rating $\mu$, the movie effect $b_{i}$ and the user effect $b_{u}. The $b_{u} are the average of the leftover obtained after removing the overall mean and the movie effect from the ratings $Y_{u, i}.
+
+
+```{r Movie-User effect model, echo = TRUE}
+
+tic()
+
+# Calculate b_u
+
+user_effect_avgs <- train_data %>%
+  left_join(movie_effect_avgs, by='movieId') %>%
+  group_by(userId) %>%
+  summarize(b_u = mean(rating - mean_rating - b_i))
+  
+
+# Predict the rating in test_data using Movie-user effect model
+
+movie_user_effect_predicted_ratings <- test_data %>%
+  left_join(movie_effect_avgs, by='movieId') %>%
+  left_join(user_effect_avgs, by='userId') %>%
+  mutate(pred = mean_rating + b_i + b_u) %>%
+  .$pred
+
+toc()
+
+```
+
+
+Calculate RMSE of Movie-user effect model
+
+```{r The RMSE of Movie-User effect model, echo = TRUE}
+
+movie_user_effect_rmse <- rmse(movie_user_effect_predicted_ratings, test_data$rating)
+
+movie_user_effect_rmse
+
+save(movie_user_effect_rmse, file = "movie_user_effect_rmse.RData")
+
+```
+
+
+### Regularized Movie-User effect model
+
+Set up a Lambdas vector 
+
+```{r Set up a Lambdas vector , echo = TRUE}
+
+lambdas <- seq(0, 10, 0.25)
+
+```
+
+
+Build a function to run Movie-user effect model with different values of lambdas, and calculate their RMSE 
+
+```{r A function to run Movie-User effect model with different lambdas, echo = TRUE}
+
+tic()
+rmses <- sapply(lambdas, function(l){
+  
+  mean_rating <- mean(train_data$rating)
+  
+  b_i <- train_data %>% 
+    group_by(movieId) %>%
+    summarize(b_i = sum(rating - mean_rating)/(n()+l))
+  
+  b_u <- train_data %>% 
+    left_join(b_i, by="movieId") %>%
+    group_by(userId) %>%
+    summarize(b_u = sum(rating - b_i - mean_rating)/(n()+l))
+  
+  movie_user_effect_predicted_ratings <- 
+    test_data %>% 
+    left_join(b_i, by = "movieId") %>%
+    left_join(b_u, by = "userId") %>%
+    mutate(pred = mean_rating + b_i + b_u) %>%
+    .$pred
+  
+  return(rmse(movie_user_effect_predicted_ratings, test_data$rating))
+})
+
+toc()
+
+```
+
+
+Visualize the rmse and lambdas to observe the optimal value of lambda 
+
+```{r plot_lambdas, echo = TRUE}
+
+qplot(lambdas, rmses)  
+
+```
+
+
+The optimal lambda is:
+
+```{r The optimal lambda, echo = TRUE}
+
+lambda <- lambdas[which.min(rmses)]
+lambda
+
+save(lambda, file = "lambda.RData")
+
+```
+
+
+Report the RMSE of the Movie-User effect model with the optimal lambda
+
+```{r Report the RMSE of the Movie-User effect model with the optimal lambda, echo = TRUE}
+
+regularized_movie_user_effect_rmse <- min(rmses)
+
+regularized_movie_user_effect_rmse
+
+save(regularized_movie_user_effect_rmse, file = "regularized_movie_user_effect_rmse.RData")
+
+```
+
+
+\pagebreak
+
+
+# Running other approaches
+
+This section will show the steps to conduct four machine learning algorithms. The first one is to run Random forest using "Ranger" package. The second one is k-nearest neighbor approach in the "caret" package. The following approaches are also in the "caret" package including Quantile Regression Neural Network and Bayesian Regularized Neural Networks.
+
+The purpose of doing this is to explore the power of other algorithms in predicting the "rating" variable and learn how to run and tune them to get better results. In fact, the expectation is to know some limitations in those machine learning "blackbox" such as how they use the memory of the computer and how long it takes to get the predicted results.
+
+
+## Random forest approach using "Ranger" package
+
+### Random forest with 300 trees using a subset of tidy_edx
+
+```{r Random forest with 300 trees, echo = TRUE}
+
+# Remove and free up working space
+rm(list = ls(all.names = TRUE))
+
+gc()
+
+
+# Load necessary packages
+library(tidyverse)
+library(ranger)
+library(rsample)
+library(tictoc)
+library(Metrics)
+library(caret)
+
+
+# Load the datasets
+tic()
+load("tidy_edx.RData")
+
+
+# Create a subset of tidy_edx dataset
+set.seed(2019)
+
+sample <- sample_n(tidy_edx, 0.001 * nrow(tidy_edx))
+
+rm(tidy_edx)
+
+gc()
+
+
+# Create validation set
+cv_split <- vfold_cv(sample, v = 5) #v: how many times the data should split
+
+
+# Mapping train & validate
+cv_data <- cv_split %>%
+  mutate(train = map(splits, ~training(.x)),
+         validate = map(splits, ~testing(.x)))
+
+
+#Tune the Hyper-Parameters
+cv_tune <- cv_data %>% crossing(mtry = 1:6)
+
+
+# Random forest model with 300 trees
+cv_models_tunerf <- cv_tune %>%
+  mutate(model = map2(train, 
+                      mtry, 
+                      ~ ranger(formula = 
+                                 rating ~.,
+                                 data = .x, 
+                                 mtry = .y,
+                                 num.trees = 300)))
+
+
+# Generate validate predictions for each model
+cv_prep_tunerf <- cv_models_tunerf %>% 
+  mutate(validate_actual = map(validate, ~.x$rating),
+         validate_predicted = map2(.x = model,
+                                   .y = validate,
+                                   ~predict(.x, .y)$predictions))
+
+
+# Calculate validate RMSE for each fold and mtry combination
+cv_eval_tunerf <- cv_prep_tunerf %>% 
+  mutate(validate_rmse = map2_dbl(.x = validate_actual, 
+                                  .y = validate_predicted, 
+                                  ~rmse(actual = .x, predicted = .y)))
+
+
+# Calculate the mean validate_mae for each mtry used  
+mean_rmse_by_mtry <- cv_eval_tunerf %>% 
+  group_by(mtry) %>% 
+  summarise(mean_rmse = mean(validate_rmse))
+
+min_mean_rmse <- min(mean_rmse_by_mtry$mean_rmse)
+
+
+# Result of Random Forest with 300 trees 
+
+mean_rmse_by_mtry
+
+
+# Save the minimum of rmse to conduct Table of results
+rf1_rmse <- min(mean_rmse_by_mtry$mean_rmse)
+
+save(rf1_rmse, file = "rf1_rmse.RData")
+
+
+# Memory usage of running Random Forest with 300 trees
+memory.size()
+
+# Time spending in running Random Forest with 300 trees
+toc()
+
+```
+
+
+\pagebreak
+
+### Run random forest with 500 trees using a subset of tidy_edx
+
+```{r Random forest with 500 trees, echo = TRUE}
+
+# Remove and free up working space
+rm(list = ls(all.names = TRUE))
+
+gc()
+
+
+# Load necessary packages
+library(tidyverse)
+library(ranger)
+library(rsample)
+library(tictoc)
+library(Metrics)
+library(caret)
+
+
+# Load the datasets
+tic()
+load("tidy_edx.RData")
+load("tidy_validation.RData")
+
+
+# Create a subset of tidy_edx dataset
+set.seed(2019)
+
+sample <- sample_n(tidy_edx, 0.001 * nrow(tidy_edx))
+
+rm(tidy_edx)
+
+gc()
+
+
+# Create validation set
+cv_split <- vfold_cv(sample, v = 5) #v: how many times the data should split
+
+
+# Mapping train & validate
+cv_data <- cv_split %>%
+  mutate(train = map(splits, ~training(.x)),
+         validate = map(splits, ~testing(.x)))
+
+
+# Tune the Hyper-Parameters
+cv_tune <- cv_data %>% crossing(mtry = 1:6)
+
+
+# Random forest model with 500 trees
+cv_models_tunerf <- cv_tune %>%
+  mutate(model = map2(train, 
+                      mtry, 
+                      ~ ranger(formula = 
+                                 rating ~.,
+                               data = .x, 
+                               mtry = .y,
+                               num.trees = 500)))
+
+
+# Generate validate predictions for each model
+cv_prep_tunerf <- cv_models_tunerf %>% 
+  mutate(validate_actual = map(validate, ~.x$rating),
+         validate_predicted = map2(.x = model,
+                                   .y = validate,
+                                   ~predict(.x, .y)$predictions))
+
+
+# Calculate validate RMSE for each fold and mtry combination
+cv_eval_tunerf <- cv_prep_tunerf %>% 
+  mutate(validate_rmse = map2_dbl(.x = validate_actual, 
+                                  .y = validate_predicted, 
+                                  ~rmse(actual = .x, predicted = .y)))
+
+
+# Calculate the mean validate_mae for each mtry used  
+mean_rmse_by_mtry <- cv_eval_tunerf %>% 
+  group_by(mtry) %>% 
+  summarise(mean_rmse = mean(validate_rmse))
+
+
+# Result of Random Forest with 500 trees 
+
+mean_rmse_by_mtry
+
+
+# Save the minimum of rmse to conduct Table of results
+rf2_rmse <- min(mean_rmse_by_mtry$mean_rmse)
+
+save(rf2_rmse, file = "rf2_rmse.RData")
+
+
+# Memory usage of running Random Forest with 500 trees
+memory.size()
+
+# Time spending in running Random Forest with 500 trees
+toc()
+
+```
+
+
+\pagebreak
+
+### Run random forest with better subset of tidy_edx with 300 trees
+
+```{r Random forest with better subset of tidy_edx with 300 trees, echo = TRUE}
+
+# Remove and free up working space
+rm(list = ls(all.names = TRUE))
+
+gc()
+
+
+# Load necessary packages
+library(tidyverse)
+library(ranger)
+library(rsample)
+library(tictoc)
+library(Metrics)
+library(caret)
+
+
+# Load the datasets
+tic()
+load("tidy_edx.RData")
+
+
+# Create a subset of tidy_edx dataset
+set.seed(2019)
+
+subset_train_data <- tidy_edx %>% 
+  group_by(movieId) %>% 
+  mutate(count = n()) %>%
+  filter(count >= 1000) %>% 
+  ungroup(movieId) %>% 
+  select(-count) %>%
+  group_by(userId) %>% 
+  mutate(count = n()) %>% 
+  filter(count >= 100) %>% 
+  ungroup(userId) %>% 
+  select(-count)
+
+sample <- sample_n(subset_train_data, 0.001 * nrow(subset_train_data))
+
+rm(tidy_edx)
+
+gc()
+
+
+# Create validation set
+cv_split <- vfold_cv(sample, v = 5) #v: how many times the data should split
+
+
+# Mapping train & validate
+cv_data <- cv_split %>%
+  mutate(train = map(splits, ~training(.x)),
+         validate = map(splits, ~testing(.x)))
+
+
+# Tune the Hyper-Parameters
+cv_tune <- cv_data %>% crossing(mtry = 1:6)
+
+# Random forest model with 300 trees
+cv_models_tunerf <- cv_tune %>%
+  mutate(model = map2(train, 
+                      mtry, 
+                      ~ ranger(formula = rating ~.,
+                                            data = .x, 
+                                            mtry = .y, 
+                                            num.trees = 300)))
+
+# Generate validate predictions for each model
+cv_prep_tunerf <- cv_models_tunerf %>% 
+  mutate(validate_actual = map(validate, ~.x$rating),
+         validate_predicted = map2(.x = model, 
+                                   .y = validate, 
+                                   ~predict(.x, .y)$predictions))
+
+# Calculate validate RMSE for each fold and mtry combination
+cv_eval_tunerf <- cv_prep_tunerf %>% 
+  mutate(validate_rmse = map2_dbl(.x = validate_actual, 
+                                  .y = validate_predicted, 
+                                  ~rmse(actual = .x, predicted = .y)))
+
+# Calculate the mean validate_mae for each mtry used  
+mean_rmse_by_mtry <- cv_eval_tunerf %>% 
+  group_by(mtry) %>% 
+  summarise(mean_rmse = mean(validate_rmse))
+
+
+# Result of Random Forest using better dataset with 300 trees 
+
+mean_rmse_by_mtry
+
+
+# Save the minimum of rmse to conduct Table of results
+rf3_rmse <- min(mean_rmse_by_mtry$mean_rmse)
+
+save(rf3_rmse, file = "rf3_rmse.RData")
+
+
+# Memory usage of running Random Forest using better dataset with 300 trees
+memory.size()
+
+# Time spending in running Random Forest using better dataset with 300 trees
+toc()
+
+```
+
+
+\pagebreak
+
+## k-Nearest Neighbors approach 
+
+```{r}
+
+# Remove and free up working space
+rm(list = ls(all.names = TRUE))
+
+gc()
+
+
+# Load necessary packages
+library(tidyverse)
+library(rsample)
+library(tictoc)
+library(Metrics)
+library(caret)
+
+
+# Load the datasets
+tic()
+load("tidy_edx.RData")
+
+
+# Create a subset of tidy_edx dataset
+set.seed(2019)
+
+sample <- sample_n(tidy_edx, 0.001 * nrow(tidy_edx))
+
+rm(tidy_edx)
+
+gc()
+
+# Set up cross validation method for the knn model 
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           p = 0.8)
+
+# Run the knn model
+model_knn <- train(rating ~ movieId + userId + genres + date_of_rating,
+           data = sample,
+           method = "knn",
+           trControl = fitControl,
+           verbose= FALSE)
+
+
+# Result of K-nearest neighbors approach
+
+model_knn$results[2]
+
+# Save the minimum of rmse to conduct Table of results
+knn_rmse <- min(model_knn$results[2])
+
+save(knn_rmse, file = "knn_rmse.RData")
+
+
+# Memory usage of running Knn model
+memory.size()
+
+# Time spending in running Knn model
+toc()
+
+```
+
+
+\pagebreak
+
+# Choosing a model for validation
+
+The table of RMSEs of different models will help in deciding which model should be use in the validation step. This project will take the model that generates the lowest RMSE in the testing data (test_data).
+
+```{r Table of RMSEs, echo = TRUE}
+
+load("benchmark.RData")
+load("movie_effect_rmse.RData")
+load("movie_user_effect_rmse.RData")
+load("regularized_movie_user_effect_rmse.RData")
+load("rf1_rmse.RData")
+load("rf2_rmse.RData")
+load("rf3_rmse.RData")
+load("knn_rmse.RData")
+
+
+# Table of RMSEs of different machine learning approaches
+RMSE_results <- data_frame(Model = "Benchmark", RMSE = benchmark_rmse)
+
+RMSE_results <- bind_rows(RMSE_results,
+                          data_frame(Model = "Movie effect",  
+                                     RMSE = movie_effect_model_rmse))
+
+RMSE_results <- bind_rows(RMSE_results,
+                          data_frame(Model = "Movie-User effect",  
+                                     RMSE = movie_user_effect_rmse))
+
+RMSE_results <- bind_rows(RMSE_results,
+                          data_frame(Model = "Regularized Movie-User effect",  
+                                     RMSE = regularized_movie_user_effect_rmse))
+
+RMSE_results <- bind_rows(RMSE_results,
+                          data_frame(Model = "Random Forest with 300 trees",  
+                                     RMSE = rf1_rmse))
+
+RMSE_results <- bind_rows(RMSE_results,
+                          data_frame(Model = "Random Forest with 500 trees",  
+                                     RMSE = rf2_rmse))
+
+RMSE_results <- bind_rows(RMSE_results,
+                          data_frame(Model = "Random Forest in better dataset",  
+                                     RMSE = rf3_rmse))
+
+RMSE_results <- bind_rows(RMSE_results,
+                          data_frame(Model = "K-nearest neighbors",  
+                                     RMSE = knn_rmse))
+
+RMSE_results %>% knitr::kable()
+
+```
+
+
+# Validate the models
+
+## Remove and free up working space
+
+```{r Remove and free up working space, echo = FALSE}
+
+rm(list = ls(all.names = TRUE))
+gc()
+memory.limit()
+memory.size()
+
+```
+
+
+## Load necessary packages
+
+```{r Necessary packages, echo = FALSE}
+
+if(!require(tidyverse)) 
+  install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(lubridate)) 
+  install.packages("lubridate", repos = "http://cran.us.r-project.org")
+
+```
+
+## Load "validation" dataset
+
+```{r}
+
+load("validation.RData")
+
+```
+
+## Tidy up the "validation" dataset.
+
+```{r Transform timestamp to date, echo = FALSE}
+
+#Separate variables in "genres", and put them into "genres" column gain
+validation_sep_genres <- validation %>% separate_rows(genres, sep = "\\|")
+
+#Parse date to "timestamp" variable
+validation_date <- validation_sep_genres %>% mutate(date_of_rating = as_datetime(timestamp)) %>%
+  select(c("userId", "movieId", "rating", "title", "genres", "date_of_rating"))
+
+```
+
+
+Separate "title" column into "title" and "movie_year"
+
+```{r Separate title column, echo = FALSE}
+
+#Select object "year" in the "title" column, and create "movie_year" variable
+#Detect "year" in the title column
+tidy_validation <- validation_date %>% 
+  mutate(movie_year = str_extract(validation_date$title, regex("\\(\\d{4}\\)"))) 
+
+tidy_validation <- tidy_validation %>%
+  mutate(movie_year = str_extract(tidy_validation$movie_year, regex("\\d{4}")))
+
+```
+
+
+```{r}
+
+tidy_validation <- tidy_validation %>%
+  mutate(movie_year = as.integer(movie_year), movieId = as.integer(movieId))
+
+```
+
+
+Save tidy_edx to the local system.
+
+```{r Save "tidy_validation", echo = FALSE}
+
+save(tidy_validation, file = "tidy_validation.RData")
+
+```
+
+
+Remove unnecessary dataset "tidy_edx_date", "tidy_edx_sep_genres"
+
+```{r}
+rm("validation_date", "validation_sep_genres")
+
+gc()
+```
+
+
+## Validate three best models that have the lowest RMSEs
+
+```{r Regularized Movie-User effect model, echo = TRUE}
+
+tic()
+
+load("tidy_edx.RData")
+load("lambda.RData")
+
+mean_rating <- mean(tidy_edx$rating)
+  
+b_i <- tidy_edx %>% 
+    group_by(movieId) %>%
+    summarize(b_i = sum(rating - mean_rating)/(n()+lambda))
+  
+b_u <- tidy_edx %>% 
+    left_join(b_i, by="movieId") %>%
+    group_by(userId) %>%
+    summarize(b_u = sum(rating - b_i - mean_rating)/(n()+lambda))
+  
+movie_user_effect_predicted_ratings <- 
+    tidy_validation %>% 
+    left_join(b_i, by = "movieId") %>%
+    left_join(b_u, by = "userId") %>%
+    mutate(pred = mean_rating + b_i + b_u) %>%
+    .$pred
+
+# Memory usage
+memory.size()
+
+# Time spending in running the model
+toc()
+
+```
+
+
+RMSE of the best model in the validation step
+
+```{r Final result, echo = TRUE}
+
+movie_user_effect_rmse <- rmse(movie_user_effect_predicted_ratings, tidy_validation$rating)
+
+Final_result <- data_frame(Model = "Movie-User effect", RMSE = movie_user_effect_rmse)
+
+Final_result %>% knitr::kable()
+
+```
+
+
+# Conclusion
+
+The report had described the progress of finding the best predicting model for rating variable in MovieLens dataset. In fact, it is the Regularized Movie-User effect model, which is belonged to Factorization approach. The smallest Root Mean Square Error that this model can archive in the validation dataset is 0.8630. 
+
+In addition, this approach outperforms two others such Random forest and K-neaesr neighbors in both memory usage and time consumption. In fact, factorization approach allows the computer to run full training dataset which can not achieve in using two others. 
+
+Although Random forest model and Knn model fail to get the smallest RMSE in this project, there are rooms for these models to improve the scores through an increase in computer capacity and knowledge of the user in understanding these models. For example, if the computer can raise its memory from 8,000 mb to 32,000 mb, it can process not only 0.1 percent of training dataset but the full one which would promise better RMSE. In addition, the ability to exploit these models and their packages by tuning their parameters could also produce better RMSE.
+
+In conclusion, the main purpose of doing this project is to  apply lessons in Harvards courses to conduct a real question. It had provided valuable time for practicing and testing what we have learnt, and the most interested thing is that it opens more questions and paths to get deeper in the machine learning field.
